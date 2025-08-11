@@ -290,8 +290,102 @@ JWT_EXPIRATION=1h
    docker compose version
    docker ps
    ```
-
+   
 > Esses passos são **persistentes**. Você **não** precisa repetir sempre — apenas quando criar outra distro do WSL ou reinstalar o ambiente.
+
+---
+
+## Conexão com banco e consultas por CLI
+
+Esta seção reúne o essencial para conectar, verificar tabelas e consultar registros **sem depender do pgAdmin**.
+
+### Verificar tabelas e consultar dados
+
+```bash
+# Listar tabelas (consulta padrão; evita comandos especiais do psql)
+docker compose exec db psql -U postgres -d taskdb -c "SELECT schemaname, tablename FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY 1,2 LIMIT 50;"
+
+# Ver 5 registros de users
+docker compose exec db psql -U postgres -d taskdb -c "SELECT id, name, email FROM users ORDER BY id DESC LIMIT 5;"
+
+# Ver 5 registros de tasks
+docker compose exec db psql -U postgres -d taskdb -c "SELECT id, title, status, due_date, user_id FROM tasks ORDER BY id DESC LIMIT 5;"
+
+# Colunas da tabela users (alternativa ao comando de descrição do psql)
+docker compose exec db psql -U postgres -d taskdb -c "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name='users' ORDER BY ordinal_position;"
+```
+
+### Aplicar o schema sem pgAdmin (on‑demand)
+
+Se o volume **já existia** e os scripts de init não rodaram, aplique manualmente o SQL do projeto:
+
+**Linux/WSL**
+
+```bash
+# assume seu arquivo está em ./db/init/001_schema.sql
+CONTAINER_ID=$(docker compose ps -q db)
+docker exec -i "$CONTAINER_ID" psql -U postgres -d taskdb < ./db/init/001_schema.sql
+```
+
+**Windows/PowerShell**
+
+```powershell
+$cid = docker compose ps -q db
+Get-Content ./db/init/001_schema.sql | docker exec -i $cid psql -U postgres -d taskdb
+```
+
+### Cliente psql (duas opções)
+
+**Opção 1 — usar o psql do próprio container (recomendado):**
+
+```bash
+docker compose exec db psql -U postgres -d taskdb -c "SELECT 1;"
+```
+
+**Opção 2 — instalar psql no WSL:**
+
+```bash
+# pacote genérico do Ubuntu (funciona na maioria dos casos)
+sudo apt-get update && sudo apt-get install -y postgresql-client
+```
+
+Ou instalar uma versão específica (ex.: 17) habilitando o repositório PGDG:
+
+```bash
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME})-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+
+sudo apt-get update && sudo apt-get install -y postgresql-client-17
+```
+
+Após instalar, você pode executar consultas diretamente do WSL:
+
+```bash
+psql "postgres://postgres:<SENHA>@localhost:5432/taskdb" -c "SELECT 1;"
+```
+
+### Conferir se os scripts de init rodaram
+
+```bash
+docker compose logs db --tail=200 | grep docker-entrypoint-initdb.d || true
+```
+
+Procure linhas como `running /docker-entrypoint-initdb.d/001_schema.sql` e `CREATE TABLE`.
+
+### Fixar versão do Postgres
+
+Para evitar surpresas do `latest`, fixe a major usada:
+
+```yaml
+services:
+  db:
+    image: postgres:17
+```
+
+> Se mudar de versão major, faça dump/restore ou **recrie o volume** (`docker compose down -v`) antes de subir novamente.
 
 ---
 
@@ -330,6 +424,10 @@ Test-NetConnection -ComputerName localhost -Port 5432
 # Testar conexão via psql (host Windows)
 psql "postgres://postgres:SuaSenhaForteAqui@localhost:5432/taskdb"
 
+#Usar o psql do próprio container (recomendado):
+
+docker compose exec db psql -U postgres -d taskdb -c "SELECT 1;"
+
 # Resetar tudo (CUIDADO: apaga dados)
 docker compose down -v
 
@@ -344,3 +442,4 @@ docker exec -it <nome-ou-id-do-container-db> bash
 ---
 
 **Pronto!** Com este guia você deve conseguir reproduzir o ambiente, entender o `docker-compose.yml`, localizar volumes e resolver os erros mais comuns (timeout, senha, daemon/sock). Se algo diferente aparecer, anote a mensagem exata e seguimos ampliando o README.
+
